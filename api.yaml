@@ -1,0 +1,242 @@
+openapi: 3.0.0
+info:
+  title: File Analysis API
+  description: API for uploading, analyzing, and querying text files based on UUIDs.
+  version: 2.1.0
+
+servers:
+  - url: 'https://api.example.com/v2'
+    description: Production server with versioning support
+
+paths:
+  /v2/files/{uuid}:
+    post:
+      summary: Upload a new file for analysis with checksum verification
+      parameters:
+      - in: path
+        name: uuid
+        required: true
+        schema:
+          type: string
+        description: Unique file identifier using a UUID (Universally Unique Identifier),eg  '123e4567-e89b-12d3-a456-426614174000'. This UUID should be unique across all files in the system and is used to track and reference the file throughout the analysis process.
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The file data in binary format. This data is expected to be the content of the file being uploaded for analysis.
+                checksum:
+                  type: string
+                  description: MD5 checksum of the file for integrity verification. This checksum is used to ensure that the file has not been corrupted or altered during the transmission process. The server will calculate the MD5 checksum of the received file and compare it with this provided value.
+
+      responses:
+        '202':
+          description: Accepted for processing
+        '400':
+          description: Bad request, e.g., missing file, UUID format error, or checksum mismatch
+        '500':
+          description: Internal server error
+  
+  /v2/files/{uuid}/parallel:
+    post:
+      summary: Initiate a parallel upload session
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            type: string
+          description: Unique file identifier using a UUID, e.g., '123e4567-e89b-12d3-a456-426614174000'. This UUID is used to uniquely identify and track the file throughout the analysis process.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fileChecksum
+                - parts
+              properties:
+                fileChecksum:
+                  type: string
+                  description: MD5 checksum of the entire file for integrity verification before chunk assembly.
+                parts:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - chunkId
+                      - order
+                      - contentLength
+                    properties:
+                      chunkId:
+                        type: integer
+                        format: int32
+                        description: Identifier for the chunk.
+                      order:
+                        type: integer
+                        format: int32
+                        description: Order of the chunk in the assembly process.
+                      contentLength:
+                        type: integer
+                        format: int64
+                        description: Length of the chunk content in bytes.
+      responses:
+        '201':
+          description: Parallel upload session initiated successfully.
+        '400':
+          description: Bad request, e.g., missing required fields, UUID format error.
+        '500':
+          description: Internal server error.
+
+  /v2/files/{uuid}/parallel/{chunkId}:
+    put:
+      summary: Upload a chunk for a parallel upload session
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            type: string
+          description: Unique file identifier using a UUID, as provided during the session initiation.
+        - in: path
+          name: chunkId
+          required: true
+          schema:
+            type: integer
+            format: int32
+          description: The identifier for the specific chunk being uploaded.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: The chunk data in binary format. This data represents a portion of the file being uploaded.
+      responses:
+        '200':
+          description: Chunk uploaded successfully.
+        '400':
+          description: Bad request, such as content length is incorrect.
+        '500':
+          description: Internal server error.
+          
+  /v2/files/{uuid}/status:
+    get:
+      summary: Check the status of file upload and analysis
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            type: string
+          description: Unique file identifier using a UUID.
+      responses:
+        '200':
+          description: Returns the current status of the file upload or analysis.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: Current status of the file; can be 'uploading', 'corrupted-chunks', 'analysis-started', or 'analysis-finished'.
+                  redirect:
+                    type: string
+                    description: URL to redirect to if the analysis is finished.
+        '301':
+          description: Redirect to the analysis results if the analysis is finished.
+          headers:
+            Location:
+              description: URL to redirect to the analysis results.
+              schema:
+                type: string
+                example: '/v2/analyses/{uuid}'
+        '400':
+          description: Bad request, e.g., incorrect UUID format.
+        '404':
+          description: File not found.
+        '500':
+          description: Internal server error.
+
+  /v2/analyses/{uuid}:
+    get:
+      summary: Retrieve analysis results for a specific file
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            type: string
+          description: Unique file identifier using a UUID.
+        - in: query
+          name: submissionDate
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Optional date filter to retrieve results for files submitted on this date.
+      responses:
+        '200':
+          description: Returns the analysis results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      description: Details of the analysis results.
+        '400':
+          description: Bad request, e.g., incorrect UUID format or invalid date.
+        '404':
+          description: File or results not found.
+        '500':
+          description: Internal server error.
+
+  /v2/files/path:
+    get:
+      summary: Find the shortest path between two files
+      parameters:
+        - in: query
+          name: sourceUUID
+          required: true
+          schema:
+            type: string
+          description: The UUID of the source file.
+        - in: query
+          name: destinationUUID
+          required: true
+          schema:
+            type: string
+          description: The UUID of the destination file.
+      responses:
+        '200':
+          description: Successfully found the shortest path between the two files.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: array
+                    items:
+                      type: string
+                    description: List of file UUIDs representing the shortest path from the source to the destination.
+        '400':
+          description: Bad request, e.g., incorrect UUID format or one of the UUIDs does not exist.
+        '404':
+          description: One or both files not found.
+        '500':
+          description: Internal server error.
+
+
+  
